@@ -107,6 +107,18 @@ static int transfer_none(struct loop_device *lo, int cmd,
 	return 0;
 }
 
+static void print_segment(struct page *page, 
+                         unsigned off,
+                         int size)
+{
+    /* off and size here is in bytes */
+	char *buf = kmap_atomic(page) + off;
+	printk(KERN_ERR "loop: print_segment off: %u, size: %d.\n",
+                    off, size);
+	kunmap_atomic(buf);
+	return;
+}
+
 static int transfer_xor(struct loop_device *lo, int cmd,
 			struct page *raw_page, unsigned raw_off,
 			struct page *loop_page, unsigned loop_off,
@@ -261,6 +273,10 @@ static int do_lo_send_direct_write(struct loop_device *lo,
 	return bw;
 }
 
+
+
+
+
 /**
  * do_lo_send_write - helper for writing data to a loop device
  *
@@ -294,16 +310,19 @@ static int lo_send(struct loop_device *lo, struct bio *bio, loff_t pos)
 
 	if (lo->transfer != transfer_none) {
 		page = alloc_page(GFP_NOIO | __GFP_HIGHMEM);
+        printk(KERN_ERR "loop: in lo->transfer != transfer_none branch\n");
 		if (unlikely(!page))
 			goto fail;
 		kmap(page);
 		do_lo_send = do_lo_send_write;
 	} else {
+        printk(KERN_ERR "loop: in lo->transfer == transfer_none branch\n");
 		do_lo_send = do_lo_send_direct_write;
 	}
 
 	bio_for_each_segment(bvec, bio, i) {
 		ret = do_lo_send(lo, bvec, pos, page);
+        print_segment(bvec->bv_page, bvec->bv_offset, bvec->bv_len);
 		if (ret < 0)
 			break;
 		pos += bvec->bv_len;
