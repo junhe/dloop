@@ -107,14 +107,20 @@ static int transfer_none(struct loop_device *lo, int cmd,
 	return 0;
 }
 
+
 static void print_segment(struct page *page, 
                          unsigned off,
                          int size)
 {
     /* off and size here is in bytes */
 	char *buf = kmap_atomic(page) + off;
+    unsigned i;
 	printk(KERN_ERR "loop: print_segment off: %u, size: %d.\n",
                     off, size);
+    for ( i = off; i < 4; i++ ) {
+        printk(KERN_ERR "loop: %u: %c 0x%X\n", i, *(buf+i), *(buf+i));
+    }
+    
 	kunmap_atomic(buf);
 	return;
 }
@@ -310,13 +316,14 @@ static int lo_send(struct loop_device *lo, struct bio *bio, loff_t pos)
 
 	if (lo->transfer != transfer_none) {
 		page = alloc_page(GFP_NOIO | __GFP_HIGHMEM);
-        printk(KERN_ERR "loop: in lo->transfer != transfer_none branch\n");
+        /*printk(KERN_ERR "loop: in lo->transfer != transfer_none branch\n");*/
 		if (unlikely(!page))
 			goto fail;
 		kmap(page);
 		do_lo_send = do_lo_send_write;
 	} else {
-        printk(KERN_ERR "loop: in lo->transfer == transfer_none branch\n");
+        //this branch will be executed
+        /*printk(KERN_ERR "loop: in lo->transfer == transfer_none branch\n");*/
 		do_lo_send = do_lo_send_direct_write;
 	}
 
