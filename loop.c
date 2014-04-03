@@ -86,6 +86,61 @@ static int max_part;
 static int part_shift;
 
 /*
+ * my new stuff
+ */
+
+static int is_special_file_data(char *addr, int size)
+{
+    /* the addr is the address got by kmap_atomic
+     * the unit of size is byte. so a typical input
+     * would be 0x2828888323 4096
+     */
+    unsigned i;
+    for ( i = 0; i < size; i++ ) {
+        if ( addr[i] != 'z' )
+            return 0;
+    }
+    return 1;
+}
+
+
+static void print_segment(char *page_start, 
+                          unsigned off,
+                          int size)
+{
+    /* off and size here is in bytes */
+    unsigned i;
+	/*printk(KERN_ERR "loop: print_segment off: %u, size: %d.\n",*/
+                    /*off, size);*/
+    for ( i = off; i < size; i++ ) {
+        printk(KERN_ERR "loop: %u: 0x%X %c\n", 
+               i, *(page_start+i), *(page_start+i));
+    }
+	return;
+}
+
+static int is_special_page(struct page *page)
+{
+	char *buf = kmap_atomic(page);
+
+    int ret = is_special_file_data(buf, PAGE_SIZE);
+    if ( ret == 1 ) {
+        printk(KERN_ERR "It is the SPECIALPAGE.\n");
+        print_segment(buf, 0, 3);
+    }
+    
+	kunmap_atomic(buf);
+    return ret;
+}
+
+
+
+
+/* 
+ *.............................................................
+ */
+
+/*
  * Transfer functions
  */
 static int transfer_none(struct loop_device *lo, int cmd,
@@ -105,24 +160,6 @@ static int transfer_none(struct loop_device *lo, int cmd,
 	kunmap_atomic(raw_buf);
 	cond_resched();
 	return 0;
-}
-
-
-static void print_segment(struct page *page, 
-                         unsigned off,
-                         int size)
-{
-    /* off and size here is in bytes */
-	char *buf = kmap_atomic(page) + off;
-    unsigned i;
-	printk(KERN_ERR "loop: print_segment off: %u, size: %d.\n",
-                    off, size);
-    for ( i = off; i < 4; i++ ) {
-        printk(KERN_ERR "loop: %u: %c 0x%X\n", i, *(buf+i), *(buf+i));
-    }
-    
-	kunmap_atomic(buf);
-	return;
 }
 
 static int transfer_xor(struct loop_device *lo, int cmd,
@@ -250,7 +287,25 @@ static int __do_lo_send_write(struct file *file,
 
 	file_start_write(file);
 	set_fs(get_ds());
-	bw = file->f_op->write(file, buf, len, &pos);
+
+    if ( is_special_file_data(buf, len)  == 1 
+            && len == PAGE_SIZE ) 
+    {
+        /*
+         * it is the special data written by me.
+         * fake it. You think I have written your data.
+         * but, I have not!!! 
+         * It does not matter whether I have 
+         * written or not, these data are not important.
+         * Later, when the application reads it, any
+         * data returned is fine.
+         */
+        /*printk(KERN_ERR "LOOP: it is a special page.\n");*/
+        bw = len;
+    } else {
+        bw = file->f_op->write(file, buf, len, &pos);
+    }
+
 	set_fs(old_fs);
 	file_end_write(file);
 	if (likely(bw == len))
@@ -271,15 +326,16 @@ static int __do_lo_send_write(struct file *file,
 static int do_lo_send_direct_write(struct loop_device *lo,
 		struct bio_vec *bvec, loff_t pos, struct page *page)
 {
-	ssize_t bw = __do_lo_send_write(lo->lo_backing_file,
+	ssize_t bw;
+
+
+	bw = __do_lo_send_write(lo->lo_backing_file,
 			kmap(bvec->bv_page) + bvec->bv_offset,
 			bvec->bv_len, pos);
 	kunmap(bvec->bv_page);
 	cond_resched();
 	return bw;
 }
-
-
 
 
 
@@ -329,7 +385,7 @@ static int lo_send(struct loop_device *lo, struct bio *bio, loff_t pos)
 
 	bio_for_each_segment(bvec, bio, i) {
 		ret = do_lo_send(lo, bvec, pos, page);
-        print_segment(bvec->bv_page, bvec->bv_offset, bvec->bv_len);
+        /*print_segment(bvec->bv_page, bvec->bv_offset, bvec->bv_len);*/
 		if (ret < 0)
 			break;
 		pos += bvec->bv_len;
