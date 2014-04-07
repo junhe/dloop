@@ -1,20 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <linux/types.h>
 
-#define TABLE_PAIR_COUNT 10
+#define TABLE_PAIR_COUNT 100
 
 struct mpair {
-    int vblock;
-    int rblock;
+    blkcnt_t vblock;
+    blkcnt_t rblock;
 };
 
 static size_t MPAIR_SIZE = sizeof(struct mpair);
 
-static void mtable_print(struct mpair *tb, int count)
+static void mtable_print(struct mpair *tb, blkcnt_t count)
 {
-    int i;
+    blkcnt_t i;
     for ( i = 0; i < count; i++ ) {
-        printf("%d (%d, %d); ", 
+        printf("%ld (%ld, %ld); ", 
                 i, (tb+i)->vblock, (tb+i)->rblock);
     }
     printf("\n");
@@ -33,18 +34,18 @@ static struct mpair *mtable_create(size_t pair_count)
  * place where we should insert the vblock if 
  * we want to.
  */
-static int mtable_lookup(struct mpair *tb, int vblock, int *pos)
+static int mtable_lookup(struct mpair *tb, blkcnt_t vblock, blkcnt_t *pos)
 {
-    int i;
+    blkcnt_t i;
     struct mpair *mp;
     /* count how many lookups we have done. 
      * prevent from dead loop
      */
-    int lookup_cnt = 0; 
+    blkcnt_t lookup_cnt = 0; 
 
     i = vblock * 7 % TABLE_PAIR_COUNT;
     mp = tb + i;
-    while( mp->vblock != 0 && lookup_cnt <= TABLE_PAIR_COUNT ) {
+    while( mp->vblock != 0 && lookup_cnt < TABLE_PAIR_COUNT ) {
         /* invariant: mp point to tb[i]*/
         if ( mp->vblock != vblock ) {
             /* not this one, try next one */
@@ -58,20 +59,27 @@ static int mtable_lookup(struct mpair *tb, int vblock, int *pos)
         }
         lookup_cnt++;
     }
+    if (lookup_cnt >= TABLE_PAIR_COUNT) {
+        /* not space left for new key */
+        return -2;
+    }
     if ( pos != NULL )
         *pos = i;
     /* vblock is not in the table */
     return -1;
 }
 
-static int mtable_add_or_overwrite(struct mpair *tb, int vblock, int rblock)
+static int mtable_add_or_overwrite(struct mpair *tb, blkcnt_t vblock, blkcnt_t rblock)
 {
-    int pos;
+    blkcnt_t pos;
     int ret;
     
-    mtable_lookup(tb, vblock, &pos);
+    ret = mtable_lookup(tb, vblock, &pos);
+    if ( ret == -2 ) {
+        return -1;
+    }
 
-    printf("need to insert/overwrite %d at %d\n", vblock, pos);
+    printf("need to insert/overwrite %ld at %ld\n", vblock, pos);
     struct mpair *p;
     p = tb + pos;
     p->vblock = vblock;
@@ -84,12 +92,19 @@ int main()
 {
     struct mpair *tb = mtable_create(TABLE_PAIR_COUNT);
 
-    int i;
-    for ( i = 0; i < TABLE_PAIR_COUNT; i++ ) {
-        mtable_add_or_overwrite(tb, 2, 88);
+    blkcnt_t i;
+    for ( i = 1; i <= TABLE_PAIR_COUNT+8; i++ ) {
+        int ret = mtable_add_or_overwrite(tb, i, i*10);
+        if (ret == -1 ) {
+            printf("failed to insert\n");
+        }
         mtable_print(tb, TABLE_PAIR_COUNT);
     }
-
+    for ( i = 1; i <= TABLE_PAIR_COUNT+8; i++ ) {
+        int ret = mtable_lookup(tb, i, NULL);
+        printf("%ld %d\n", i, ret);
+        /*mtable_print(tb, TABLE_PAIR_COUNT);*/
+    }
     free(tb);
 }
 
