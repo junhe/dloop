@@ -143,7 +143,7 @@ struct mpair {
 
 struct mtable {
     struct mpair* pairs;
-    blkcnt_t      first_free_block;
+    blkcnt_t      next_free_block;
     blkcnt_t      count; /* num of pairs */
 };
 
@@ -178,7 +178,7 @@ static struct mtable *mtable_create(size_t pair_count)
     }
 
     tb->count = pair_count;
-    tb->first_free_block = 0;
+    tb->next_free_block = 0;
 
     size = sizeof(struct mpair) * pair_count;
     tb->pairs = (struct mpair *)vmalloc(size);
@@ -300,8 +300,8 @@ static int mtable_get_rblock (struct mtable *tb,
         /* need to add a new mapping */
         blkcnt_t new_rblock;
 
-        new_rblock = tb->first_free_block;
-        tb->first_free_block++;
+        new_rblock = tb->next_free_block;
+        tb->next_free_block++;
 
         mtable_write(tb, pos, vblock, new_rblock);
         *rblock = new_rblock;
@@ -498,6 +498,7 @@ static int __do_lo_send_write(struct file *file,
                    "loop error: %lld cannot be divided by page size!\n", pos);
         }
         ret = mtable_get_rblock(mtb, vblock, &rblock);
+        /*printk(KERN_ERR "loop: mtable next_free_block: %lu.\n", mtb->next_free_block);*/
         if (ret == 0) {
             /* mapped successfully. */
             pos2 = rblock * PAGE_SIZE;
