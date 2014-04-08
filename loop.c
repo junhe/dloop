@@ -146,7 +146,7 @@ struct mpair {
 struct mtable {
     int           magic_number;
     blkcnt_t      next_free_block;
-    blkcnt_t      count; /* num of pairs */
+    blkcnt_t      max_n_pairs; /* num of pairs */
     struct mpair* pairs;
 };
 
@@ -161,7 +161,7 @@ static void mtable_print(struct mtable *tb)
     struct mpair *mp;
 
     mp = tb->pairs;    
-    for ( i = 0; i < tb->count; i++ ) {
+    for ( i = 0; i < tb->max_n_pairs; i++ ) {
         printk(KERN_ERR "%lu (%lu, %lu); ", 
                 i, (mp+i)->vblock, (mp+i)->rblock);
     }
@@ -181,14 +181,14 @@ static struct mtable *mtable_create(size_t pair_count)
     }
 
     tb->magic_number = 0x44;
-    tb->count = pair_count;
+    tb->max_n_pairs = pair_count;
     /* one block for header metadata
      * table pairs
      * image blocks
      */
-    tb->next_free_block = 1 + tb->count * sizeof(struct mpair) / 4096;
+    tb->next_free_block = 1 + tb->max_n_pairs * sizeof(struct mpair) / 4096;
 
-    size = sizeof(struct mpair) * pair_count;
+    size = sizeof(struct mpair) * tb->max_n_pairs;
     tb->pairs = (struct mpair *)vmalloc(size);
 
     if ( tb->pairs == NULL ) {
@@ -222,21 +222,21 @@ static int mtable_lookup(struct mtable *tb,
     struct mpair *mp;
     blkcnt_t lookup_cnt = 0; 
 
-    if ( tb->count == 0 ) {
+    if ( tb->max_n_pairs == 0 ) {
         return -2;
     }
 
-    /* count how many lookups we have done. 
+    /* max_n_pairs how many lookups we have done. 
      * prevent from dead loop
      */
 
-    i = vblock * 7 % tb->count;
+    i = vblock * 7 % tb->max_n_pairs;
     mp = tb->pairs + i;
-    while( mp->vblock != ULONG_MAX && lookup_cnt < tb->count ) {
+    while( mp->vblock != ULONG_MAX && lookup_cnt < tb->max_n_pairs ) {
         /* invariant: mp point to tb[i]*/
         if ( mp->vblock != vblock ) {
             /* not this one, try next one */
-            i = (i + 1) % tb->count;
+            i = (i + 1) % tb->max_n_pairs;
             mp = tb->pairs + i;
         } else {
             /* found it */
@@ -247,7 +247,7 @@ static int mtable_lookup(struct mtable *tb,
         }
         lookup_cnt++;
     }
-    if (lookup_cnt >= tb->count) {
+    if (lookup_cnt >= tb->max_n_pairs) {
         /* not space left for new key */
         return -2;
     }
@@ -1249,7 +1249,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
         set_fs(get_ds());
         file->f_op->read(file, tmp, 4096, &pos);
         set_fs(old_fs);
-        printk(KERN_ERR "loop: first char: %X\n", *tmp); 
+        /*printk(KERN_ERR "loop: first char: %X\n", *tmp); */
         
         ptb = (struct mtable *)tmp;
 
@@ -1258,33 +1258,36 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
              * update metadata with the ones in file
              */
             char *p;
-            blkcnt_t rblock, blki;
+            blkcnt_t pair_start_block, blki;
 
             printk(KERN_ERR "backing file has metadata\n");
-            mtb->count = ptb->count;
+            mtb->max_n_pairs = ptb->max_n_pairs;
             mtb->next_free_block = ptb->next_free_block;
 
             /* also, the file has all the table contents,
              * read them in block by block*/
-            rblock = 1 + mtb->count * sizeof(struct mpair) / 4096;
+            pair_start_block = 1 + mtb->max_n_pairs * sizeof(struct mpair) / 4096;
             p = (char *) mtb->pairs;
-            for ( blki = 0; blki < mtb->count; blki++ ) 
+            for ( blki = 0; blki < mtb->max_n_pairs; blki++ ) 
             {
-                pos = (rblock + blki) * 4096;
+                pos = (pair_start_block + blki) * 4096;
                 old_fs = get_fs();
                 set_fs(get_ds());
                 file->f_op->read(file, p + blki*4096, 4096, &pos);
                 set_fs(old_fs);               
             }
-
+            printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
+                              mtb->pairs->vblock,
+                              mtb->pairs->rblock);
+            printk(KERN_ERR "loop: successfully read mtable pairs.\n");
         } else {
             /* the file does not have the metadata 
              * everything in mtb is just fine.
              */
             printk(KERN_ERR "backing file has NO metadata\n");
         }
-        printk(KERN_ERR "magic: %X, count: %lu, next_free_block: %lu\n",
-                        mtb->magic_number, mtb->count, mtb->next_free_block);
+        printk(KERN_ERR "magic: %X, max_n_pairs: %lu, next_free_block: %lu\n",
+                        mtb->magic_number, mtb->max_n_pairs, mtb->next_free_block);
         vfree(tmp);
     }
 
@@ -1385,6 +1388,77 @@ static int loop_clr_fd(struct loop_device *lo)
 	if (filp == NULL)
 		return -EINVAL;
 
+    {
+        char *tmp;
+        loff_t pos;
+        ssize_t bw;
+        mm_segment_t old_fs;
+        blkcnt_t pair_start_block, blki;
+        char *p;
+        ssize_t nblocks;
+
+        /* write mtable to file */
+        tmp = vmalloc(4096);
+        memset(tmp, 0, 4096);
+        memcpy(tmp, mtb, sizeof(struct mtable));
+        pos = 0; /* write mtable to the head of the file*/
+
+        old_fs = get_fs();
+        set_fs(get_ds());
+        bw = filp->f_op->write(filp, tmp, 4096, &pos);
+        set_fs(old_fs);
+        if (bw != 4096) {
+            printk(KERN_ERR "loop: loop_clr_fd: "
+                    "Write error at byte offset %llu, length %i.\n",
+                                (unsigned long long)pos, 4096);
+            vfree(tmp);
+            return -EIO;
+        } else {
+            printk(KERN_ERR "loop: magic: %X, max_n_pairs: %lu, next_free_block: %lu\n",
+                        mtb->magic_number, mtb->max_n_pairs, mtb->next_free_block);
+            printk(KERN_ERR "loop: loop_clr_fd: "
+                    "successfully written mtable to file.\n");
+        }
+        vfree(tmp);
+
+        /* write mtable pairs to backing file */
+        pair_start_block = 1 + mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+        printk(KERN_ERR "loop: pair_start_block: %lu\n", pair_start_block);
+
+        p = (char *) mtb->pairs;
+        /* number of block occupied by the table itself */
+        nblocks = mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+
+        for ( blki = 0; blki < nblocks; blki++ ) 
+        {
+            pos = (pair_start_block + blki) * 4096;
+            file_start_write(filp);
+            old_fs = get_fs();
+            set_fs(get_ds());
+            bw = filp->f_op->write(filp, p + blki*4096, 4096, &pos);
+            /*bw = vfs_write(filp, p + blki*4096, 4096, &pos);*/
+            /*bw = vfs_write(filp, p, 4096, &pos);*/
+            set_fs(old_fs);               
+            file_end_write(filp);
+            if (bw != 4096) {
+                printk(KERN_ERR "loop: Write error at byte offset %llu, "
+                                "length %i. bw=%lu.\n",
+                                (unsigned long long)pos, 4096, bw);
+                mutex_unlock(&lo->lo_ctl_mutex);
+                return -EIO;
+            } else {
+                printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",
+                                (unsigned long long)pos, bw);
+            }
+            /*vfs_fsync(filp, 0);*/
+        }
+        printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
+                          mtb->pairs->vblock,
+                          mtb->pairs->rblock);
+        printk(KERN_ERR "loop: successfully written mtable pairs.\n");
+    }
+
+
 	spin_lock_irq(&lo->lo_lock);
 	lo->lo_state = Lo_rundown;
 	spin_unlock_irq(&lo->lo_lock);
@@ -1428,40 +1502,12 @@ static int loop_clr_fd(struct loop_device *lo)
 	if (!part_shift)
 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
 
-    /* just to be safe, write with the lock */
-    {
-        char *tmp;
-        loff_t pos;
-        ssize_t bw;
-        mm_segment_t old_fs;
 
-        tmp = vmalloc(4096);
-        memset(tmp, 0, 4096);
-        memcpy(tmp, mtb, sizeof(struct mtable));
-        pos = 0; /* write mtable to the head of the file*/
-
-        old_fs = get_fs();
-        set_fs(get_ds());
-        bw = filp->f_op->write(filp, tmp, 4096, &pos);
-        set_fs(old_fs);
-        if (bw != 4096) {
-            printk(KERN_ERR "loop: loop_clr_fd: "
-                    "Write error at byte offset %llu, length %i.\n",
-                                (unsigned long long)pos, 4096);
-            vfree(tmp);
-            return -EINVAL;
-        } else {
-            printk(KERN_ERR "magic: %X, count: %lu, next_free_block: %lu\n",
-                        mtb->magic_number, mtb->count, mtb->next_free_block);
-            printk(KERN_ERR "loop: loop_clr_fd: "
-                    "successfully written mtable to file.\n");
-        }
-
-        vfree(tmp);
-    }
+    
 
 	mutex_unlock(&lo->lo_ctl_mutex);
-    
+
+
 	/*
 	 * Need not hold lo_ctl_mutex to fput backing file.
 	 * Calling fput holding lo_ctl_mutex triggers a circular
