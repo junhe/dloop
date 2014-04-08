@@ -147,6 +147,11 @@ struct mtable {
     blkcnt_t      count; /* num of pairs */
 };
 
+/* TODO: this is bad. we may need more than one.
+ * It is initiated in loop_set_fd, deleted in 
+ * loop_clr_fd */
+static struct mtable *mtb;
+
 static void mtable_print(struct mtable *tb)
 {
     blkcnt_t i;
@@ -168,6 +173,7 @@ static struct mtable *mtable_create(size_t pair_count)
     tb = (struct mtable *)vmalloc(sizeof(struct mtable));
     if ( tb == NULL ) {
         /* print something */
+        printk(KERN_ERR "loop: failed to allocate mtable\n");
         return NULL;
     }
 
@@ -179,10 +185,12 @@ static struct mtable *mtable_create(size_t pair_count)
 
     if ( tb->pairs == NULL ) {
         /* print error */
+        printk(KERN_ERR "loop: failed to allocate mtable pairs\n");
         return NULL;
     } 
-    /* zero them if necessary */
+
     memset(tb->pairs, 0xff, size);
+    printk(KERN_ERR "mtable allocated.\n");
     return tb;
 }
 
@@ -308,6 +316,7 @@ static void mtable_release(struct mtable *tb)
 {
     vfree(tb->pairs);
     vfree(tb);
+    printk(KERN_ERR "mtable freed.\n");
 }
 
 /* 
@@ -1168,6 +1177,10 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 		goto out_clr;
 	}
 	lo->lo_state = Lo_bound;
+
+    /* initialize mapping table */
+    mtb = mtable_create(262144); /* 1GB of blocks */
+
 	wake_up_process(lo->lo_thread);
 	if (part_shift)
 		lo->lo_flags |= LO_FLAGS_PARTSCAN;
@@ -1315,6 +1328,8 @@ static int loop_clr_fd(struct loop_device *lo)
 	 * bd_mutex which is usually taken before lo_ctl_mutex.
 	 */
 	fput(filp);
+
+    mtable_release(mtb);
 	return 0;
 }
 
