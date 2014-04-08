@@ -310,6 +310,8 @@ static int mtable_get_rblock (struct mtable *tb,
         /* full table, no chance adding new mapping */
         return -2;
     }
+    /* just to suppress the compiler warning.. */
+    return -2;
 }
 
 static void mtable_release(struct mtable *tb)
@@ -466,6 +468,7 @@ static int __do_lo_send_write(struct file *file,
 		u8 *buf, const int len, loff_t pos)
 {
 	ssize_t bw;
+    loff_t pos2;
 	mm_segment_t old_fs = get_fs();
 
 	file_start_write(file);
@@ -486,15 +489,31 @@ static int __do_lo_send_write(struct file *file,
         /*printk(KERN_ERR "LOOP: it is a special page.\n");*/
         bw = len;
     } else {
-        bw = file->f_op->write(file, buf, len, &pos);
+        blkcnt_t vblock, rblock;
+        int ret;
+
+        vblock = pos / PAGE_SIZE;
+        if ( pos % PAGE_SIZE != 0 ) {
+            printk(KERN_ERR 
+                   "loop error: %lld cannot be divided by page size!\n", pos);
+        }
+        ret = mtable_get_rblock(mtb, vblock, &rblock);
+        if (ret == 0) {
+            /* mapped successfully. */
+            pos2 = rblock * PAGE_SIZE;
+            bw = file->f_op->write(file, buf, len, &pos2);
+        } else {
+            /* mapping table is full. */
+            bw = 0;
+        }
     }
 
 	set_fs(old_fs);
 	file_end_write(file);
 	if (likely(bw == len))
 		return 0;
-	printk(KERN_ERR "loop: Write error at byte offset %llu, length %i.\n",
-			(unsigned long long)pos, len);
+	printk(KERN_ERR "loop: Write error at byte offset v%llu r%llu, length %i.\n",
+			(unsigned long long)pos, (unsigned long long)pos2, len);
 	if (bw >= 0)
 		bw = -EIO;
 	return bw;
@@ -636,6 +655,32 @@ do_lo_receive(struct loop_device *lo,
 	struct splice_desc sd;
 	struct file *file;
 	ssize_t retval;
+    blkcnt_t vblock, rblock;
+    int ret;
+    loff_t pos2, inpage_off;
+
+    vblock = pos / PAGE_SIZE;
+    inpage_off = pos % PAGE_SIZE;
+
+    ret = mtable_lookup(mtb, vblock, &rblock, NULL);
+    if (ret == 0) {
+        /* found the mapping */
+        pos2 = rblock * PAGE_SIZE + inpage_off;
+        printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu pos2:%lld.\n",
+                         vblock, pos, rblock, pos2);
+    } else {
+        printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",
+                         vblock);
+        /* the upper level tries to read a real block
+         * not existing in the mapping table. Just give
+         * it a random one.
+         * if it is a special page, its contents will not be
+         * used, so it is fine.
+         * if it is metadata, it must have a mapping.
+         * if it is random data, we are giving randome data.
+         */
+        pos2 = 0;
+    }
 
 	cookie.lo = lo;
 	cookie.page = bvec->bv_page;
@@ -645,7 +690,7 @@ do_lo_receive(struct loop_device *lo,
 	sd.len = 0;
 	sd.total_len = bvec->bv_len;
 	sd.flags = 0;
-	sd.pos = pos;
+	sd.pos = pos2;
 	sd.u.data = &cookie;
 
 	file = lo->lo_backing_file;
