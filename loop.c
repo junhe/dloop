@@ -141,7 +141,7 @@ struct mpair {
     blkcnt_t rblock;
 };
 
-#define FIXED_PAIR_COUNT 262144
+#define FIXED_NUM_PAIRS 262144
 #define MTB_MAGIC_NUM    0x44
 struct mtable {
     int           magic_number;
@@ -1233,29 +1233,28 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	lo->lo_state = Lo_bound;
 
     /* initialize mapping table */
-    mtb = mtable_create(FIXED_PAIR_COUNT); /* 1GB of blocks */
+    mtb = mtable_create(FIXED_NUM_PAIRS); /* 1GB of blocks */
    
     {
         mm_segment_t old_fs;
         char *tmp ;
         loff_t pos;
         struct mtable *ptb;
+        ssize_t nblocks;
 
+        /* read the mtable from file */
         tmp = vmalloc(4096);
         pos = 0;
-        /*Get current segment descriptor **/
         old_fs = get_fs();
-        /*Set segment descriptor associated to kernel space*/
         set_fs(get_ds());
         file->f_op->read(file, tmp, 4096, &pos);
         set_fs(old_fs);
-        /*printk(KERN_ERR "loop: first char: %X\n", *tmp); */
         
         ptb = (struct mtable *)tmp;
 
         if (ptb->magic_number == MTB_MAGIC_NUM) {
             /* the file has the metadata 
-             * update metadata with the ones in file
+             * update mtb with the one in file 
              */
             char *p;
             blkcnt_t pair_start_block, blki;
@@ -1266,9 +1265,11 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 
             /* also, the file has all the table contents,
              * read them in block by block*/
-            pair_start_block = 1 + mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+            pair_start_block = 1;
+            /* number of blocks storing the mapping table */
+            nblocks = mtb->max_n_pairs * sizeof(struct mpair) / 4096;
             p = (char *) mtb->pairs;
-            for ( blki = 0; blki < mtb->max_n_pairs; blki++ ) 
+            for ( blki = 0; blki < nblocks; blki++ ) 
             {
                 pos = (pair_start_block + blki) * 4096;
                 old_fs = get_fs();
@@ -1422,7 +1423,7 @@ static int loop_clr_fd(struct loop_device *lo)
         vfree(tmp);
 
         /* write mtable pairs to backing file */
-        pair_start_block = 1 + mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+        pair_start_block = 1;
         printk(KERN_ERR "loop: pair_start_block: %lu\n", pair_start_block);
 
         p = (char *) mtb->pairs;
@@ -1447,15 +1448,16 @@ static int loop_clr_fd(struct loop_device *lo)
                 mutex_unlock(&lo->lo_ctl_mutex);
                 return -EIO;
             } else {
-                printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",
-                                (unsigned long long)pos, bw);
+                /*printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",*/
+                                /*(unsigned long long)pos, bw);*/
             }
             /*vfs_fsync(filp, 0);*/
         }
         printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
                           mtb->pairs->vblock,
                           mtb->pairs->rblock);
-        printk(KERN_ERR "loop: successfully written mtable pairs.\n");
+        printk(KERN_ERR "loop: successfully written mtable pairs "
+                        "(%lu blocks written).\n", nblocks);
     }
 
 
