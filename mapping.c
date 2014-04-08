@@ -191,6 +191,8 @@ int main()
     /*}*/
 
     /*return 0;*/
+    printf("%X\n", 'a');
+    return 0;
 
     blkcnt_t i;
     for ( i = 0; i < 20; i++ ) {

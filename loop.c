@@ -141,10 +141,13 @@ struct mpair {
     blkcnt_t rblock;
 };
 
+#define FIXED_PAIR_COUNT 262144
+#define MTB_MAGIC_NUM    0x44
 struct mtable {
-    struct mpair* pairs;
+    int           magic_number;
     blkcnt_t      next_free_block;
     blkcnt_t      count; /* num of pairs */
+    struct mpair* pairs;
 };
 
 /* TODO: this is bad. we may need more than one.
@@ -177,8 +180,13 @@ static struct mtable *mtable_create(size_t pair_count)
         return NULL;
     }
 
+    tb->magic_number = 0x44;
     tb->count = pair_count;
-    tb->next_free_block = 0;
+    /* one block for header metadata
+     * table pairs
+     * image blocks
+     */
+    tb->next_free_block = 1 + tb->count * sizeof(struct mpair) / 4096;
 
     size = sizeof(struct mpair) * pair_count;
     tb->pairs = (struct mpair *)vmalloc(size);
@@ -667,11 +675,11 @@ do_lo_receive(struct loop_device *lo,
     if (ret == 0) {
         /* found the mapping */
         pos2 = rblock * PAGE_SIZE + inpage_off;
-        printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu pos2:%lld.\n",
-                         vblock, pos, rblock, pos2);
+        /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu pos2:%lld.\n",*/
+                         /*vblock, pos, rblock, pos2);*/
     } else {
-        printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",
-                         vblock);
+        /*printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",*/
+                         /*vblock);*/
         /* the upper level tries to read a real block
          * not existing in the mapping table. Just give
          * it a random one.
@@ -1225,7 +1233,60 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	lo->lo_state = Lo_bound;
 
     /* initialize mapping table */
-    mtb = mtable_create(262144); /* 1GB of blocks */
+    mtb = mtable_create(FIXED_PAIR_COUNT); /* 1GB of blocks */
+   
+    {
+        mm_segment_t old_fs;
+        char *tmp ;
+        loff_t pos;
+        struct mtable *ptb;
+
+        tmp = vmalloc(4096);
+        pos = 0;
+        /*Get current segment descriptor **/
+        old_fs = get_fs();
+        /*Set segment descriptor associated to kernel space*/
+        set_fs(get_ds());
+        file->f_op->read(file, tmp, 4096, &pos);
+        set_fs(old_fs);
+        printk(KERN_ERR "loop: first char: %X\n", *tmp); 
+        
+        ptb = (struct mtable *)tmp;
+
+        if (ptb->magic_number == MTB_MAGIC_NUM) {
+            /* the file has the metadata 
+             * update metadata with the ones in file
+             */
+            char *p;
+            blkcnt_t rblock, blki;
+
+            printk(KERN_ERR "backing file has metadata\n");
+            mtb->count = ptb->count;
+            mtb->next_free_block = ptb->next_free_block;
+
+            /* also, the file has all the table contents,
+             * read them in block by block*/
+            rblock = 1 + mtb->count * sizeof(struct mpair) / 4096;
+            p = (char *) mtb->pairs;
+            for ( blki = 0; blki < mtb->count; blki++ ) 
+            {
+                pos = (rblock + blki) * 4096;
+                old_fs = get_fs();
+                set_fs(get_ds());
+                file->f_op->read(file, p + blki*4096, 4096, &pos);
+                set_fs(old_fs);               
+            }
+
+        } else {
+            /* the file does not have the metadata 
+             * everything in mtb is just fine.
+             */
+            printk(KERN_ERR "backing file has NO metadata\n");
+        }
+        printk(KERN_ERR "magic: %X, count: %lu, next_free_block: %lu\n",
+                        mtb->magic_number, mtb->count, mtb->next_free_block);
+        vfree(tmp);
+    }
 
 	wake_up_process(lo->lo_thread);
 	if (part_shift)
@@ -1366,7 +1427,41 @@ static int loop_clr_fd(struct loop_device *lo)
 	lo->lo_flags = 0;
 	if (!part_shift)
 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
+
+    /* just to be safe, write with the lock */
+    {
+        char *tmp;
+        loff_t pos;
+        ssize_t bw;
+        mm_segment_t old_fs;
+
+        tmp = vmalloc(4096);
+        memset(tmp, 0, 4096);
+        memcpy(tmp, mtb, sizeof(struct mtable));
+        pos = 0; /* write mtable to the head of the file*/
+
+        old_fs = get_fs();
+        set_fs(get_ds());
+        bw = filp->f_op->write(filp, tmp, 4096, &pos);
+        set_fs(old_fs);
+        if (bw != 4096) {
+            printk(KERN_ERR "loop: loop_clr_fd: "
+                    "Write error at byte offset %llu, length %i.\n",
+                                (unsigned long long)pos, 4096);
+            vfree(tmp);
+            return -EINVAL;
+        } else {
+            printk(KERN_ERR "magic: %X, count: %lu, next_free_block: %lu\n",
+                        mtb->magic_number, mtb->count, mtb->next_free_block);
+            printk(KERN_ERR "loop: loop_clr_fd: "
+                    "successfully written mtable to file.\n");
+        }
+
+        vfree(tmp);
+    }
+
 	mutex_unlock(&lo->lo_ctl_mutex);
+    
 	/*
 	 * Need not hold lo_ctl_mutex to fput backing file.
 	 * Calling fput holding lo_ctl_mutex triggers a circular
