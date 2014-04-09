@@ -243,6 +243,11 @@ static int mtable_lookup(struct mtable *tb,
     struct mpair *mp;
     blkcnt_t lookup_cnt = 0; 
 
+    /* for debug */
+    /**rblock = vblock + 8192;*/
+    /*return 0;*/
+
+
     if ( tb->max_n_pairs == 0 ) {
         return -2;
     }
@@ -515,7 +520,7 @@ static int __do_lo_send_write(struct file *file,
          * Later, when the application reads it, any
          * data returned is fine.
          */
-        /*printk(KERN_ERR "LOOP: it is a special page.\n");*/
+        printk(KERN_ERR "LOOP: it is a special page.\n");
         bw = len;
     } else {
         blkcnt_t vblock_start, rblock, nblocks, blocki;
@@ -535,8 +540,8 @@ static int __do_lo_send_write(struct file *file,
             ret = mtable_get_rblock(mtb, vblock_start+blocki, &rblock);
             if (ret == 0) {
                 /* mapped successfully. */
-                printk(KERN_ERR "loop: will write vblock: %lu rblock:%lu\n",
-                                vblock_start+blocki, rblock);
+                /*printk(KERN_ERR "loop: will write vblock: %lu rblock:%lu\n",*/
+                                /*vblock_start+blocki, rblock);*/
                 rpos = rblock * mtb->lo_blocksize;
                 bw += file->f_op->write(file, buf+blocki*mtb->lo_blocksize, 
                                         mtb->lo_blocksize, &rpos);
@@ -2449,4 +2454,3 @@ static int __init max_loop_setup(char *str)
 }
 
 __setup("max_loop=", max_loop_setup);
-#endif
