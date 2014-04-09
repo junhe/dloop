@@ -667,6 +667,8 @@ do_lo_receive(struct loop_device *lo,
     blkcnt_t vblock, rblock;
     int ret;
     loff_t pos2, inpage_off;
+    char *buf;
+    mm_segment_t old_fs;
 
     vblock = pos / PAGE_SIZE;
     inpage_off = pos % PAGE_SIZE;
@@ -691,19 +693,30 @@ do_lo_receive(struct loop_device *lo,
         pos2 = 0;
     }
 
-	cookie.lo = lo;
-	cookie.page = bvec->bv_page;
-	cookie.offset = bvec->bv_offset;
-	cookie.bsize = bsize;
+    buf = kmap(bvec->bv_page) + bvec->bv_offset;
+    file = lo->lo_backing_file;
 
-	sd.len = 0;
-	sd.total_len = bvec->bv_len;
-	sd.flags = 0;
-	sd.pos = pos2;
-	sd.u.data = &cookie;
+    old_fs = get_fs();
+    set_fs(get_ds());
+    retval = file->f_op->read(file, buf, 
+                    bvec->bv_len, &pos2);
+    set_fs(old_fs);      
+    kunmap(bvec->bv_page);
 
-	file = lo->lo_backing_file;
-	retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
+
+	/*cookie.lo = lo;*/
+	/*cookie.page = bvec->bv_page;*/
+	/*cookie.offset = bvec->bv_offset;*/
+	/*cookie.bsize = bsize;*/
+
+	/*sd.len = 0;*/
+	/*sd.total_len = bvec->bv_len;*/
+	/*sd.flags = 0;*/
+	/*sd.pos = pos2;*/
+	/*sd.u.data = &cookie;*/
+
+	/*file = lo->lo_backing_file;*/
+	/*retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);*/
 
 	return retval;
 }
