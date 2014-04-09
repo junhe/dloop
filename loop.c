@@ -147,6 +147,9 @@ struct mtable {
     int           magic_number;
     blkcnt_t      next_free_block;
     blkcnt_t      max_n_pairs; /* num of pairs */
+    blkcnt_t      pair_seg_blocks;
+    /* a copy from loop_device for convenience */
+    unsigned      lo_blocksize;
     struct mpair* pairs;
 };
 
@@ -168,7 +171,7 @@ static void mtable_print(struct mtable *tb)
     printk(KERN_ERR "\n");
 }
 
-static struct mtable *mtable_create(size_t pair_count)
+static struct mtable *mtable_create(size_t pair_count, unsigned blocksize)
 {
     struct mtable *tb;
     unsigned long size;
@@ -181,14 +184,16 @@ static struct mtable *mtable_create(size_t pair_count)
     }
 
     tb->magic_number = 0x44;
+    tb->lo_blocksize = blocksize;
     tb->max_n_pairs = pair_count;
+    tb->pair_seg_blocks = tb->max_n_pairs * sizeof(struct mpair) / tb->lo_blocksize;
     /* one block for header metadata
      * table pairs
      * image blocks
      */
-    tb->next_free_block = 1 + tb->max_n_pairs * sizeof(struct mpair) / 4096;
+    tb->next_free_block = 1 + tb->pair_seg_blocks;
 
-    size = sizeof(struct mpair) * tb->max_n_pairs;
+    size = tb->pair_seg_blocks * tb->lo_blocksize;
     tb->pairs = (struct mpair *)vmalloc(size);
 
     if ( tb->pairs == NULL ) {
@@ -476,14 +481,14 @@ static int __do_lo_send_write(struct file *file,
 		u8 *buf, const int len, loff_t pos)
 {
 	ssize_t bw;
-    loff_t pos2;
 	mm_segment_t old_fs = get_fs();
 
 	file_start_write(file);
 	set_fs(get_ds());
 
+    bw = 0;
     if ( is_special_file_data(buf, len)  == 1 
-            && len == PAGE_SIZE ) 
+            && len % mtb->lo_blocksize == 0 ) 
     {
         /*
          * it is the special data written by me.
@@ -497,23 +502,29 @@ static int __do_lo_send_write(struct file *file,
         /*printk(KERN_ERR "LOOP: it is a special page.\n");*/
         bw = len;
     } else {
-        blkcnt_t vblock, rblock;
+        blkcnt_t vblock_start, rblock, nblocks, blocki;
+        loff_t rpos;
         int ret;
 
-        vblock = pos / PAGE_SIZE;
-        if ( pos % PAGE_SIZE != 0 ) {
+        vblock_start = pos / mtb->lo_blocksize;
+        if ( pos % mtb->lo_blocksize != 0 ) {
             printk(KERN_ERR 
                    "loop error: %lld cannot be divided by page size!\n", pos);
         }
-        ret = mtable_get_rblock(mtb, vblock, &rblock);
-        /*printk(KERN_ERR "loop: mtable next_free_block: %lu.\n", mtb->next_free_block);*/
-        if (ret == 0) {
-            /* mapped successfully. */
-            pos2 = rblock * PAGE_SIZE;
-            bw = file->f_op->write(file, buf, len, &pos2);
-        } else {
-            /* mapping table is full. */
-            bw = 0;
+        nblocks = len / mtb->lo_blocksize;
+
+        for ( blocki = 0; blocki < nblocks; blocki++ ) {
+            ret = mtable_get_rblock(mtb, vblock_start+blocki, &rblock);
+            /*printk(KERN_ERR "loop: mtable next_free_block: %lu.\n", mtb->next_free_block);*/
+            if (ret == 0) {
+                /* mapped successfully. */
+                rpos = rblock * mtb->lo_blocksize;
+                bw += file->f_op->write(file, buf+blocki*mtb->lo_blocksize, 
+                                        mtb->lo_blocksize, &rpos);
+            } else {
+                /* mapping table is full. */
+                bw += 0;
+            }
         }
     }
 
@@ -521,8 +532,8 @@ static int __do_lo_send_write(struct file *file,
 	file_end_write(file);
 	if (likely(bw == len))
 		return 0;
-	printk(KERN_ERR "loop: Write error at byte offset v%llu r%llu, length %i.\n",
-			(unsigned long long)pos, (unsigned long long)pos2, len);
+	printk(KERN_ERR "loop: Write error at byte offset v%llu length %i.\n",
+			(unsigned long long)pos, len);
 	if (bw >= 0)
 		bw = -EIO;
 	return bw;
@@ -1233,7 +1244,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	lo->lo_state = Lo_bound;
 
     /* initialize mapping table */
-    mtb = mtable_create(FIXED_NUM_PAIRS); /* 1GB of blocks */
+    mtb = mtable_create(FIXED_NUM_PAIRS, lo->lo_blocksize); /* 1GB of blocks */
    
     {
         mm_segment_t old_fs;
