@@ -244,8 +244,8 @@ static int mtable_lookup(struct mtable *tb,
     blkcnt_t lookup_cnt = 0; 
 
     /* for debug */
-    /**rblock = vblock + 8192;*/
-    /*return 0;*/
+    *rblock = vblock ;
+    return 0;
 
 
     if ( tb->max_n_pairs == 0 ) {
@@ -506,7 +506,9 @@ static int __do_lo_send_write(struct file *file,
 
 	file_start_write(file);
 	set_fs(get_ds());
-
+    
+    bw = file->f_op->write(file, buf, len, &pos);
+    goto after;
     bw = 0;
     if ( is_special_file_data(buf, len)  == 1 
             && len % mtb->lo_blocksize == 0 ) 
@@ -553,6 +555,7 @@ static int __do_lo_send_write(struct file *file,
         }
     }
 
+after:
 	set_fs(old_fs);
 	file_end_write(file);
 	if (likely(bw == len))
@@ -696,8 +699,8 @@ static ssize_t
 do_lo_receive(struct loop_device *lo,
 	      struct bio_vec *bvec, int bsize, loff_t pos)
 {
-	/*struct lo_read_data cookie;*/
-	/*struct splice_desc sd;*/
+    struct lo_read_data cookie;
+    struct splice_desc sd;
 	struct file *file;
 	ssize_t retval;
     blkcnt_t vblock_start, rblock, nblocks, blocki;
@@ -706,6 +709,33 @@ do_lo_receive(struct loop_device *lo,
     char *buf;
     mm_segment_t old_fs;
 
+
+    cookie.lo = lo;
+    //data will be put here at the offset
+    cookie.page = bvec->bv_page;
+    cookie.offset = bvec->bv_offset;
+    cookie.bsize = bsize;
+
+    sd.len = 0;
+    sd.total_len = bvec->bv_len;
+    sd.flags = 0;
+    sd.pos = pos; //file position
+    sd.u.data = &cookie;
+
+    file = lo->lo_backing_file;
+    //a fancy way of reading from file to page in sd.
+    retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
+
+    return retval;
+
+
+
+
+
+
+
+
+    /* ************************* */
     vblock_start = pos / mtb->lo_blocksize;
     if ( pos % mtb->lo_blocksize != 0 ) {
         printk(KERN_ERR "loop: %llu cannot be divided by %llu\n",
@@ -2454,3 +2484,4 @@ static int __init max_loop_setup(char *str)
 }
 
 __setup("max_loop=", max_loop_setup);
+#endif
