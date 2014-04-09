@@ -535,8 +535,8 @@ static int __do_lo_send_write(struct file *file,
             ret = mtable_get_rblock(mtb, vblock_start+blocki, &rblock);
             if (ret == 0) {
                 /* mapped successfully. */
-                /*printk(KERN_ERR "loop: will write vblock: %lu rblock:%lu\n", */
-                                /*vblock_start+blocki, rblock);*/
+                printk(KERN_ERR "loop: will write vblock: %lu rblock:%lu\n",
+                                vblock_start+blocki, rblock);
                 rpos = rblock * mtb->lo_blocksize;
                 bw += file->f_op->write(file, buf+blocki*mtb->lo_blocksize, 
                                         mtb->lo_blocksize, &rpos);
@@ -702,6 +702,10 @@ do_lo_receive(struct loop_device *lo,
     mm_segment_t old_fs;
 
     vblock_start = pos / mtb->lo_blocksize;
+    if ( pos % mtb->lo_blocksize != 0 ) {
+        printk(KERN_ERR "loop: %llu cannot be divided by %llu\n",
+                pos, mtb->lo_blocksize);
+    }
     nblocks = bvec->bv_len / mtb->lo_blocksize; 
     printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",
                     nblocks, bvec->bv_len);
@@ -738,6 +742,7 @@ do_lo_receive(struct loop_device *lo,
         retval += file->f_op->read(file, buf, 
                         mtb->lo_blocksize, &rpos);
         set_fs(old_fs);               
+        kunmap(bvec->bv_page);
 
         /*printk(KERN_ERR "loop: retval: %llu.\n", retval);*/
 
