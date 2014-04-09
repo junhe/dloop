@@ -244,7 +244,7 @@ static int mtable_lookup(struct mtable *tb,
     blkcnt_t lookup_cnt = 0; 
 
     /* for debug */
-    *rblock = vblock ;
+    *rblock = vblock + 8192 ;
     return 0;
 
 
