@@ -136,6 +136,9 @@ static int is_special_page(struct page *page)
 /*
  ************************* mappting table ********************************
  */
+
+#define SECTORSIZE 512
+
 struct mpair {
     blkcnt_t vblock;
     blkcnt_t rblock;
@@ -522,20 +525,24 @@ static int __do_lo_send_write(struct file *file,
         vblock_start = pos / mtb->lo_blocksize;
         if ( pos % mtb->lo_blocksize != 0 ) {
             printk(KERN_ERR 
-                   "loop error: %lld cannot be divided by page size!\n", pos);
+                   "loop error: %lld cannot be divided by block size!\n", pos);
         }
         nblocks = len / mtb->lo_blocksize;
+        /*printk(KERN_ERR "loop: vblock_start:%lu, nblocks:%lu.\n",*/
+                        /*vblock_start, nblocks);*/
 
         for ( blocki = 0; blocki < nblocks; blocki++ ) {
             ret = mtable_get_rblock(mtb, vblock_start+blocki, &rblock);
-            /*printk(KERN_ERR "loop: mtable next_free_block: %lu.\n", mtb->next_free_block);*/
             if (ret == 0) {
                 /* mapped successfully. */
+                /*printk(KERN_ERR "loop: will write vblock: %lu rblock:%lu\n", */
+                                /*vblock_start+blocki, rblock);*/
                 rpos = rblock * mtb->lo_blocksize;
                 bw += file->f_op->write(file, buf+blocki*mtb->lo_blocksize, 
                                         mtb->lo_blocksize, &rpos);
             } else {
                 /* mapping table is full. */
+                printk(KERN_ERR "loop: mapping table is full.\n");
                 bw += 0;
             }
         }
@@ -554,6 +561,7 @@ static int __do_lo_send_write(struct file *file,
 
 /**
  * do_lo_send_direct_write - helper for writing data to a loop device
+ * B
  *
  * This is the fast, non-transforming version that does not need double
  * buffering.
@@ -683,16 +691,20 @@ static ssize_t
 do_lo_receive(struct loop_device *lo,
 	      struct bio_vec *bvec, int bsize, loff_t pos)
 {
-	struct lo_read_data cookie;
-	struct splice_desc sd;
+	/*struct lo_read_data cookie;*/
+	/*struct splice_desc sd;*/
 	struct file *file;
 	ssize_t retval;
     blkcnt_t vblock_start, rblock, nblocks, blocki;
     int ret;
     loff_t rpos;
+    char *buf;
+    mm_segment_t old_fs;
 
     vblock_start = pos / mtb->lo_blocksize;
     nblocks = bvec->bv_len / mtb->lo_blocksize; 
+    printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",
+                    nblocks, bvec->bv_len);
 
     retval = 0;
     for (blocki = 0; blocki < nblocks; blocki++) {
@@ -700,11 +712,13 @@ do_lo_receive(struct loop_device *lo,
         if (ret == 0) {
             /* found the mapping */
             rpos = rblock * mtb->lo_blocksize;
-            /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu rpos:%lld.\n",*/
-                             /*vblock_start, pos, rblock, rpos);*/
+            /*printk(KERN_ERR */
+                    /*"loop: do_lo_receive: v%lu pos:%lld r%lu rpos:%lld.\n",*/
+                     /*vblock_start+blocki, pos, rblock, rpos);*/
         } else {
-            /*printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",*/
-                             /*vblock_start);*/
+            /*printk(KERN_ERR */
+                    /*"loop: reading unmapped block %lu, but it is fine.\n",*/
+                             /*vblock_start+blocki);*/
             /* the upper level tries to read a real block
              * not existing in the mapping table. Just give
              * it a random one.
@@ -716,20 +730,38 @@ do_lo_receive(struct loop_device *lo,
             rpos = 0;
         }
 
-        cookie.lo = lo;
-        cookie.page = bvec->bv_page;
-        cookie.offset = bvec->bv_offset + blocki * mtb->lo_blocksize;
-        cookie.bsize = bsize;
-
-        sd.len = 0;
-        /*sd.total_len = bvec->bv_len;*/
-        sd.total_len = mtb->lo_blocksize;
-        sd.flags = 0;
-        sd.pos = rpos;
-        sd.u.data = &cookie;
-
         file = lo->lo_backing_file;
-        retval += splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
+        buf = kmap(bvec->bv_page) + blocki * mtb->lo_blocksize;
+
+        old_fs = get_fs();
+        set_fs(get_ds());
+        retval += file->f_op->read(file, buf, 
+                        mtb->lo_blocksize, &rpos);
+        set_fs(old_fs);               
+
+        /*printk(KERN_ERR "loop: retval: %llu.\n", retval);*/
+
+
+
+        /*cookie.lo = lo;*/
+        /*cookie.page = bvec->bv_page;*/
+        /*cookie.offset = bvec->bv_offset + blocki * mtb->lo_blocksize;*/
+        /*[>cookie.offset = 0;<]*/
+        /*printk(KERN_ERR "loop: cookie.offset: %u.\n", */
+                /*cookie.offset);*/
+        /*[>cookie.bsize = bsize;<]*/
+        /*cookie.bsize = mtb->lo_blocksize;*/
+
+
+        /*sd.len = 0;*/
+        /*sd.total_len = bvec->bv_len;*/
+        /*[>sd.total_len = mtb->lo_blocksize;<]*/
+        /*sd.flags = 0;*/
+        /*sd.pos = rpos;*/
+        /*sd.u.data = &cookie;*/
+
+        /*file = lo->lo_backing_file;*/
+        /*retval += splice_direct_to_actor(file, &sd, lo_direct_splice_actor);*/
     }
 
 	return retval;
@@ -1316,8 +1348,8 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             /* the file does not have the metadata 
              * create a new table
              */
-            mtb = mtable_create(FIXED_NUM_PAIRS, lo->lo_blocksize); /* 1GB of blocks */
-            printk(KERN_ERR "backing file has NO metadata\n");
+            mtb = mtable_create(FIXED_NUM_PAIRS, SECTORSIZE); /* 1GB of blocks */
+            printk(KERN_ERR "backing file has NO metadata. successfully built in-memory mtable\n");
         }
         mtable_print(mtb);
         vfree(tmp);
