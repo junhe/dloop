@@ -244,8 +244,8 @@ static int mtable_lookup(struct mtable *tb,
     blkcnt_t lookup_cnt = 0; 
 
     /* for debug */
-    *rblock = vblock;
-    return 0;
+    /**rblock = vblock+8192;*/
+    /*return 0;*/
 
 
     if ( tb->max_n_pairs == 0 ) {
@@ -507,8 +507,8 @@ static int __do_lo_send_write(struct file *file,
 	file_start_write(file);
 	set_fs(get_ds());
     
-    bw = file->f_op->write(file, buf, len, &pos);
-    goto after;
+    /*bw = file->f_op->write(file, buf, len, &pos);*/
+    /*goto after;*/
     bw = 0;
     if ( is_special_file_data(buf, len)  == 1 
             && len % mtb->lo_blocksize == 0 ) 
@@ -749,8 +749,8 @@ do_lo_receive(struct loop_device *lo,
             rpos = 0;
         }
 
-        printk(KERN_ERR "loop: reading: pos %llu rpos %llu blocki %llu\n",
-                            pos, rpos, blocki);
+        /*printk(KERN_ERR "loop: reading: pos %llu rpos %llu blocki %llu\n",*/
+                            /*pos, rpos, blocki);*/
         file = lo->lo_backing_file;
         buf = kmap(bvec->bv_page) + bvec->bv_offset + blocki * mtb->lo_blocksize;
 
