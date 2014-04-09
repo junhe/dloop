@@ -507,8 +507,8 @@ static int __do_lo_send_write(struct file *file,
 	file_start_write(file);
 	set_fs(get_ds());
     
-    /*bw = file->f_op->write(file, buf, len, &pos);*/
-    /*goto after;*/
+    bw = file->f_op->write(file, buf, len, &pos);
+    goto after;
     bw = 0;
     if ( is_special_file_data(buf, len)  == 1 
             && len % mtb->lo_blocksize == 0 ) 
@@ -706,28 +706,8 @@ do_lo_receive(struct loop_device *lo,
     blkcnt_t vblock_start, rblock, nblocks, blocki;
     int ret;
     loff_t rpos;
-    char *buf;
+    char *buf, *mymem;
     mm_segment_t old_fs;
-
-
-    cookie.lo = lo;
-    //data will be put here at the offset
-    cookie.page = bvec->bv_page;
-    cookie.offset = bvec->bv_offset;
-    cookie.bsize = bsize;
-
-    sd.len = 0;
-    sd.total_len = bvec->bv_len;
-    sd.flags = 0;
-    sd.pos = pos; //file position
-    sd.u.data = &cookie;
-
-    file = lo->lo_backing_file;
-    //a fancy way of reading from file to page in sd.
-    retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
-
-    return retval;
-
 
 
 
@@ -742,8 +722,8 @@ do_lo_receive(struct loop_device *lo,
                 pos, mtb->lo_blocksize);
     }
     nblocks = bvec->bv_len / mtb->lo_blocksize; 
-    printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",
-                    nblocks, bvec->bv_len);
+    /*printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",*/
+                    /*nblocks, bvec->bv_len);*/
 
     retval = 0;
     for (blocki = 0; blocki < nblocks; blocki++) {
@@ -769,8 +749,10 @@ do_lo_receive(struct loop_device *lo,
             rpos = 0;
         }
 
+        printk(KERN_ERR "loop: reading: pos %llu rpos %llu blocki %llu\n",
+                            pos, rpos, blocki);
         file = lo->lo_backing_file;
-        buf = kmap(bvec->bv_page) + blocki * mtb->lo_blocksize;
+        buf = kmap(bvec->bv_page) + bvec->bv_offset + blocki * mtb->lo_blocksize;
 
         old_fs = get_fs();
         set_fs(get_ds());
@@ -805,6 +787,34 @@ do_lo_receive(struct loop_device *lo,
     }
 
 	return retval;
+
+
+    cookie.lo = lo;
+    //data will be put here at the offset
+    cookie.page = bvec->bv_page;
+    cookie.offset = bvec->bv_offset;
+    cookie.bsize = bsize;
+
+    sd.len = 0;
+    sd.total_len = bvec->bv_len;
+    sd.flags = 0;
+    sd.pos = pos; //file position
+    sd.u.data = &cookie;
+
+    file = lo->lo_backing_file;
+    //a fancy way of reading from file to page in sd.
+    retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
+
+
+    return retval;
+
+
+
+
+
+
+
+
 }
 
 static int
