@@ -1243,8 +1243,6 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	}
 	lo->lo_state = Lo_bound;
 
-    /* initialize mapping table */
-    mtb = mtable_create(FIXED_NUM_PAIRS, lo->lo_blocksize); /* 1GB of blocks */
    
     {
         mm_segment_t old_fs;
@@ -1271,6 +1269,9 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             blkcnt_t pair_start_block, blki;
 
             printk(KERN_ERR "backing file has metadata\n");
+            
+            /* initialize mapping table, use the block size in file */
+            mtb = mtable_create(FIXED_NUM_PAIRS, ptb->lo_blocksize); /* 1GB of blocks */
             mtb->max_n_pairs = ptb->max_n_pairs;
             mtb->next_free_block = ptb->next_free_block;
 
@@ -1294,8 +1295,9 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             printk(KERN_ERR "loop: successfully read mtable pairs.\n");
         } else {
             /* the file does not have the metadata 
-             * everything in mtb is just fine.
+             * create a new table
              */
+            mtb = mtable_create(FIXED_NUM_PAIRS, lo->lo_blocksize); /* 1GB of blocks */
             printk(KERN_ERR "backing file has NO metadata\n");
         }
         printk(KERN_ERR "magic: %X, max_n_pairs: %lu, next_free_block: %lu\n",
