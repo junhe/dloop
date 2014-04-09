@@ -712,8 +712,8 @@ do_lo_receive(struct loop_device *lo,
                 pos, mtb->lo_blocksize);
     }
     nblocks = bvec->bv_len / mtb->lo_blocksize; 
-    printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",
-                    nblocks, bvec->bv_len);
+    /*printk(KERN_ERR "loop: do_lo_receive: nblocks:%lu. bvec->len:%u\n",*/
+                    /*nblocks, bvec->bv_len);*/
 
     retval = 0;
     for (blocki = 0; blocki < nblocks; blocki++) {
@@ -740,7 +740,8 @@ do_lo_receive(struct loop_device *lo,
         }
 
         file = lo->lo_backing_file;
-        buf = kmap(bvec->bv_page) + blocki * mtb->lo_blocksize;
+        buf = kmap(bvec->bv_page) + 
+                bvec->bv_offset + blocki * mtb->lo_blocksize;
 
         old_fs = get_fs();
         set_fs(get_ds());
