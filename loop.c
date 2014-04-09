@@ -674,47 +674,52 @@ do_lo_receive(struct loop_device *lo,
 	struct splice_desc sd;
 	struct file *file;
 	ssize_t retval;
-    blkcnt_t vblock_start, rblock, nblocks;
+    blkcnt_t vblock_start, rblock, nblocks, blocki;
     int ret;
-    loff_t rpos, inpage_off;
+    loff_t rpos;
 
     vblock_start = pos / mtb->lo_blocksize;
-    nblocks = bvec->bv_len; 
-    inpage_off = pos % PAGE_SIZE;
+    nblocks = bvec->bv_len / mtb->lo_blocksize; 
 
-    ret = mtable_lookup(mtb, vblock_start, &rblock, NULL);
-    if (ret == 0) {
-        /* found the mapping */
-        rpos = rblock * PAGE_SIZE + inpage_off;
-        /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu rpos:%lld.\n",*/
-                         /*vblock_start, pos, rblock, rpos);*/
-    } else {
-        /*printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",*/
-                         /*vblock_start);*/
-        /* the upper level tries to read a real block
-         * not existing in the mapping table. Just give
-         * it a random one.
-         * if it is a special page, its contents will not be
-         * used, so it is fine.
-         * if it is metadata, it must have a mapping.
-         * if it is random data, we are giving randome data.
-         */
-        rpos = 0;
+    retval = 0;
+    for (blocki = 0; blocki < nblocks; blocki++) {
+        ret = mtable_lookup(mtb, vblock_start+blocki, &rblock, NULL);
+        if (ret == 0) {
+            /* found the mapping */
+            rpos = rblock * mtb->lo_blocksize;
+            /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu rpos:%lld.\n",*/
+                             /*vblock_start, pos, rblock, rpos);*/
+        } else {
+            /*printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",*/
+                             /*vblock_start);*/
+            /* the upper level tries to read a real block
+             * not existing in the mapping table. Just give
+             * it a random one.
+             * if it is a special page, its contents will not be
+             * used, so it is fine.
+             * if it is metadata, it must have a mapping.
+             * if it is random data, we are giving randome data.
+             */
+            rpos = 0;
+        }
+
+        cookie.lo = lo;
+        cookie.page = bvec->bv_page;
+        cookie.offset = bvec->bv_offset + blocki * mtb->lo_blocksize;
+        cookie.bsize = bsize;
+
+        sd.len = 0;
+        /*sd.total_len = bvec->bv_len;*/
+        sd.total_len = mtb->lo_blocksize;
+        sd.flags = 0;
+        sd.pos = rpos;
+        sd.u.data = &cookie;
+
+        file = lo->lo_backing_file;
+        retval += splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
     }
 
-	cookie.lo = lo;
-	cookie.page = bvec->bv_page;
-	cookie.offset = bvec->bv_offset;
-	cookie.bsize = bsize;
 
-	sd.len = 0;
-	sd.total_len = bvec->bv_len;
-	sd.flags = 0;
-	sd.pos = rpos;
-	sd.u.data = &cookie;
-
-	file = lo->lo_backing_file;
-	retval = splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
 
 	return retval;
 }
