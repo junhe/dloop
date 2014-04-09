@@ -550,7 +550,6 @@ static int do_lo_send_direct_write(struct loop_device *lo,
 {
 	ssize_t bw;
 
-
 	bw = __do_lo_send_write(lo->lo_backing_file,
 			kmap(bvec->bv_page) + bvec->bv_offset,
 			bvec->bv_len, pos);
@@ -675,22 +674,23 @@ do_lo_receive(struct loop_device *lo,
 	struct splice_desc sd;
 	struct file *file;
 	ssize_t retval;
-    blkcnt_t vblock, rblock;
+    blkcnt_t vblock_start, rblock, nblocks;
     int ret;
-    loff_t pos2, inpage_off;
+    loff_t rpos, inpage_off;
 
-    vblock = pos / PAGE_SIZE;
+    vblock_start = pos / mtb->lo_blocksize;
+    nblocks = bvec->bv_len; 
     inpage_off = pos % PAGE_SIZE;
 
-    ret = mtable_lookup(mtb, vblock, &rblock, NULL);
+    ret = mtable_lookup(mtb, vblock_start, &rblock, NULL);
     if (ret == 0) {
         /* found the mapping */
-        pos2 = rblock * PAGE_SIZE + inpage_off;
-        /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu pos2:%lld.\n",*/
-                         /*vblock, pos, rblock, pos2);*/
+        rpos = rblock * PAGE_SIZE + inpage_off;
+        /*printk(KERN_ERR "loop: do_lo_receive: v%lu pos:%lld r%lu rpos:%lld.\n",*/
+                         /*vblock_start, pos, rblock, rpos);*/
     } else {
         /*printk(KERN_ERR "loop: reading unmapped block %lu, but it is fine.\n",*/
-                         /*vblock);*/
+                         /*vblock_start);*/
         /* the upper level tries to read a real block
          * not existing in the mapping table. Just give
          * it a random one.
@@ -699,7 +699,7 @@ do_lo_receive(struct loop_device *lo,
          * if it is metadata, it must have a mapping.
          * if it is random data, we are giving randome data.
          */
-        pos2 = 0;
+        rpos = 0;
     }
 
 	cookie.lo = lo;
@@ -710,7 +710,7 @@ do_lo_receive(struct loop_device *lo,
 	sd.len = 0;
 	sd.total_len = bvec->bv_len;
 	sd.flags = 0;
-	sd.pos = pos2;
+	sd.pos = rpos;
 	sd.u.data = &cookie;
 
 	file = lo->lo_backing_file;
