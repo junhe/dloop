@@ -147,7 +147,7 @@ struct mtable {
     int           magic_number;
     blkcnt_t      next_free_block;
     blkcnt_t      max_n_pairs; /* num of pairs */
-    blkcnt_t      pair_seg_blocks;
+    blkcnt_t      pair_seg_blocks; /* number of blocks for the pairs */
     /* a copy from loop_device for convenience */
     unsigned      lo_blocksize;
     struct mpair* pairs;
@@ -163,9 +163,17 @@ static void mtable_print(struct mtable *tb)
     blkcnt_t i;
     struct mpair *mp;
 
+
+    printk(KERN_ERR 
+            "loop: magic: 0x%X, max_n_pairs: %lu, next_free_block: %lu,"
+            "lo_blocksize: %u, pair_seg_blocks: %lu\n",
+                tb->magic_number, tb->max_n_pairs, tb->next_free_block,
+                tb->lo_blocksize, tb->pair_seg_blocks);
+
     mp = tb->pairs;    
-    for ( i = 0; i < tb->max_n_pairs; i++ ) {
-        printk(KERN_ERR "%lu (%lu, %lu); ", 
+    /* print two pairs */
+    for ( i = 0; i < 2; i++ ) {
+        printk(KERN_ERR "loop: %lu (%lu, %lu); ", 
                 i, (mp+i)->vblock, (mp+i)->rblock);
     }
     printk(KERN_ERR "\n");
@@ -180,6 +188,11 @@ static struct mtable *mtable_create(size_t pair_count, unsigned blocksize)
     if ( tb == NULL ) {
         /* print something */
         printk(KERN_ERR "loop: failed to allocate mtable\n");
+        return NULL;
+    }
+    if ( sizeof(struct mtable) > blocksize ) {
+        printk(KERN_ERR "loop: struct mtable is larger than a block."
+                "this is bad because we use only one block to store it.");
         return NULL;
     }
 
@@ -718,8 +731,6 @@ do_lo_receive(struct loop_device *lo,
         file = lo->lo_backing_file;
         retval += splice_direct_to_actor(file, &sd, lo_direct_splice_actor);
     }
-
-
 
 	return retval;
 }
