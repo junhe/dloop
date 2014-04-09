@@ -1250,6 +1250,8 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	kobject_uevent(&disk_to_dev(bdev->bd_disk)->kobj, KOBJ_CHANGE);
 
 	set_blocksize(bdev, lo_blocksize);
+    printk(KERN_ERR "loop: loop_set_fd: lo_blocksize: %u.\n",
+                    lo_blocksize);
 
 	lo->lo_thread = kthread_create(loop_thread, lo, "loop%d",
 						lo->lo_number);
@@ -1295,14 +1297,15 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
              * read them in block by block*/
             pair_start_block = 1;
             /* number of blocks storing the mapping table */
-            nblocks = mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+            nblocks = mtb->pair_seg_blocks;
             p = (char *) mtb->pairs;
             for ( blki = 0; blki < nblocks; blki++ ) 
             {
-                pos = (pair_start_block + blki) * 4096;
+                pos = (pair_start_block + blki) * mtb->lo_blocksize;
                 old_fs = get_fs();
                 set_fs(get_ds());
-                file->f_op->read(file, p + blki*4096, 4096, &pos);
+                file->f_op->read(file, p + blki*mtb->lo_blocksize, 
+                                mtb->lo_blocksize, &pos);
                 set_fs(old_fs);               
             }
             printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
@@ -1316,8 +1319,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             mtb = mtable_create(FIXED_NUM_PAIRS, lo->lo_blocksize); /* 1GB of blocks */
             printk(KERN_ERR "backing file has NO metadata\n");
         }
-        printk(KERN_ERR "magic: %X, max_n_pairs: %lu, next_free_block: %lu\n",
-                        mtb->magic_number, mtb->max_n_pairs, mtb->next_free_block);
+        mtable_print(mtb);
         vfree(tmp);
     }
 
@@ -1419,8 +1421,8 @@ static int loop_clr_fd(struct loop_device *lo)
 		return -EINVAL;
 
     {
-        char *tmp;
         loff_t pos;
+        unsigned int mtbsize;
         ssize_t bw;
         mm_segment_t old_fs;
         blkcnt_t pair_start_block, blki;
@@ -1428,28 +1430,22 @@ static int loop_clr_fd(struct loop_device *lo)
         ssize_t nblocks;
 
         /* write mtable to file */
-        tmp = vmalloc(4096);
-        memset(tmp, 0, 4096);
-        memcpy(tmp, mtb, sizeof(struct mtable));
         pos = 0; /* write mtable to the head of the file*/
-
+        mtbsize = sizeof(struct mtable);
         old_fs = get_fs();
         set_fs(get_ds());
-        bw = filp->f_op->write(filp, tmp, 4096, &pos);
+        bw = filp->f_op->write(filp, (char *)mtb, mtbsize, &pos);
         set_fs(old_fs);
-        if (bw != 4096) {
+        if (bw != mtbsize) {
             printk(KERN_ERR "loop: loop_clr_fd: "
-                    "Write error at byte offset %llu, length %i.\n",
-                                (unsigned long long)pos, 4096);
-            vfree(tmp);
+                    "Write error at byte offset %llu, length %u.\n",
+                                (unsigned long long)pos, mtbsize);
             return -EIO;
-        } else {
-            printk(KERN_ERR "loop: magic: %X, max_n_pairs: %lu, next_free_block: %lu\n",
-                        mtb->magic_number, mtb->max_n_pairs, mtb->next_free_block);
-            printk(KERN_ERR "loop: loop_clr_fd: "
-                    "successfully written mtable to file.\n");
-        }
-        vfree(tmp);
+        } 
+
+        mtable_print(mtb);
+        printk(KERN_ERR "loop: loop_clr_fd: "
+                "successfully written mtable to file.\n");
 
         /* write mtable pairs to backing file */
         pair_start_block = 1;
@@ -1457,23 +1453,24 @@ static int loop_clr_fd(struct loop_device *lo)
 
         p = (char *) mtb->pairs;
         /* number of block occupied by the table itself */
-        nblocks = mtb->max_n_pairs * sizeof(struct mpair) / 4096;
+        nblocks = mtb->pair_seg_blocks;
 
         for ( blki = 0; blki < nblocks; blki++ ) 
         {
-            pos = (pair_start_block + blki) * 4096;
+            pos = (pair_start_block + blki) * mtb->lo_blocksize;
             file_start_write(filp);
             old_fs = get_fs();
             set_fs(get_ds());
-            bw = filp->f_op->write(filp, p + blki*4096, 4096, &pos);
+            bw = filp->f_op->write(filp, p + blki*mtb->lo_blocksize, 
+                                mtb->lo_blocksize, &pos);
             /*bw = vfs_write(filp, p + blki*4096, 4096, &pos);*/
             /*bw = vfs_write(filp, p, 4096, &pos);*/
             set_fs(old_fs);               
             file_end_write(filp);
-            if (bw != 4096) {
+            if (bw != mtb->lo_blocksize) {
                 printk(KERN_ERR "loop: Write error at byte offset %llu, "
                                 "length %i. bw=%lu.\n",
-                                (unsigned long long)pos, 4096, bw);
+                        (unsigned long long)pos, mtb->lo_blocksize, bw);
                 mutex_unlock(&lo->lo_ctl_mutex);
                 return -EIO;
             } else {
