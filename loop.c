@@ -88,6 +88,8 @@ static int part_shift;
 /*
  * my new stuff
  */
+extern int do_truncate(struct dentry *, loff_t start, unsigned int time_attrs,
+                                struct file *filp);
 
 static int is_special_file_data(char *addr, int size)
 {
@@ -1524,6 +1526,7 @@ static int loop_clr_fd(struct loop_device *lo)
         ssize_t nblocks;
         struct inode *inode;
         struct iattr newattrs;
+        loff_t newsize;
 
         /* write mtable to file */
         pos = 0; /* write mtable to the head of the file*/
@@ -1581,20 +1584,26 @@ static int loop_clr_fd(struct loop_device *lo)
         printk(KERN_ERR "loop: successfully written mtable pairs "
                         "(%lu blocks written).\n", nblocks);
 
-        /*inode = filp->f_mapping->host;*/
-        /*inode->i_op->setattr(filp.f_path.dentry, */
-        /*set_fs(old_fs);               */
-        /*file_end_write(filp);*/
+        newsize = mtb->blocksize*mtb->next_free_block;
+        newattrs.ia_size = ((newsize/4096)+1)*4096;
+        newattrs.ia_valid = ATTR_SIZE | ATTR_MTIME | ATTR_CTIME;
+        newattrs.ia_file = filp;
+        newattrs.ia_valid |= ATTR_FILE;
+
+        inode = filp->f_mapping->host;
+
+        set_fs(get_ds());
         /*do_truncate(filp->f_path.dentry, mtb->blocksize*mtb->next_free_block,*/
                     /*ATTR_MTIME|ATTR_CTIME, filp);*/
-        /*set_fs(old_fs);               */
+
+        inode->i_op->setattr(filp->f_path.dentry, &newattrs);
+        set_fs(old_fs);              
+        printk(KERN_ERR "loop: truncated file to %llu.\n",
+                        newattrs.ia_size);
+
     }
 
-
-    
-
 	mutex_unlock(&lo->lo_ctl_mutex);
-
 
 	/*
 	 * Need not hold lo_ctl_mutex to fput backing file.
