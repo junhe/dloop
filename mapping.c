@@ -191,7 +191,7 @@ int main()
     /*}*/
 
     /*return 0;*/
-    printf("%X\n", 'a');
+    printf("%u\n", sizeof(struct mpair));
     return 0;
 
     blkcnt_t i;

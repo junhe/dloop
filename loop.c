@@ -146,7 +146,7 @@ struct mpair {
     blkcnt_t rblock;
 };
 
-#define FIXED_NUM_PAIRS 2097152    /* mapping for 1GB space */ 
+#define FIXED_NUM_PAIRS 4194304   /* mapping for 2GB space */ 
 #define MTB_MAGIC_NUM    0x44
 struct mtable {
     int           magic_number;
@@ -524,7 +524,7 @@ static int __do_lo_send_write(struct file *file,
          * Later, when the application reads it, any
          * data returned is fine.
          */
-        printk(KERN_ERR "LOOP: it is a special page.\n");
+        /*printk(KERN_ERR "LOOP: it is a special block.\n");*/
         bw = len;
     } else {
         blkcnt_t vblock_start, rblock, nblocks, blocki;
