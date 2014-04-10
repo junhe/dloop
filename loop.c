@@ -156,6 +156,9 @@ struct mtable {
     /* a copy from loop_device for convenience */
     unsigned      blocksize;
     loff_t        loop_size; /* in 512 byte sectors */
+    /* if this mtable is read from file, is_new_image=0;
+     * if it is brand new, is_new_image=1 */
+    int           is_new_image; 
     struct mpair* pairs;
 };
 
@@ -212,6 +215,7 @@ static struct mtable *mtable_create(size_t pair_count, unsigned blocksize)
      * image blocks
      */
     tb->next_free_block = 1 + tb->pair_seg_blocks;
+    tb->is_new_image = 1;
 
     size = tb->pair_seg_blocks * tb->blocksize;
     tb->pairs = (struct mpair *)vmalloc(size);
@@ -1300,6 +1304,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             mtb = mtable_create(FIXED_NUM_PAIRS, ptb->blocksize); /* 1GB of blocks */
             mtb->next_free_block = ptb->next_free_block;
             mtb->loop_size = ptb->loop_size;
+            mtb->is_new_image = 0; /* not a new image */
             size = ptb->loop_size; /* overwrite the current one */
 
             /* also, the file has all the table contents,
@@ -1517,7 +1522,8 @@ static int loop_clr_fd(struct loop_device *lo)
 	if (!part_shift)
 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
 
-    {
+    if (mtb->is_new_image == 1) {
+        /* only save image when this is a new image */
         loff_t pos;
         unsigned int mtbsize;
         ssize_t bw;
@@ -1602,6 +1608,9 @@ static int loop_clr_fd(struct loop_device *lo)
         printk(KERN_ERR "loop: truncated file to %llu.\n",
                         newattrs.ia_size);
 
+    } else {
+        printk(KERN_ERR
+                "loop: loop_clr_fd: the mtable is not new. so we do not save it.\n");
     }
 
 	mutex_unlock(&lo->lo_ctl_mutex);
