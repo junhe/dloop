@@ -146,7 +146,7 @@ struct mpair {
     blkcnt_t rblock;
 };
 
-#define FIXED_NUM_PAIRS 262144
+#define FIXED_NUM_PAIRS 2097152    /* mapping for 1GB space */ 
 #define MTB_MAGIC_NUM    0x44
 struct mtable {
     int           magic_number;
