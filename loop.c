@@ -1533,7 +1533,7 @@ static int loop_clr_fd(struct loop_device *lo)
         ssize_t nblocks;
         struct inode *inode;
         struct iattr newattrs;
-        loff_t newsize;
+        loff_t newsize, len;
 
         /* write mtable to file */
         pos = 0; /* write mtable to the head of the file*/
@@ -1561,35 +1561,57 @@ static int loop_clr_fd(struct loop_device *lo)
         /* number of block occupied by the table itself */
         nblocks = mtb->pair_seg_blocks;
 
-        for ( blki = 0; blki < nblocks; blki++ ) 
-        {
-            pos = (pair_start_block + blki) * mtb->blocksize;
-            file_start_write(filp);
-            old_fs = get_fs();
-            set_fs(get_ds());
-            bw = filp->f_op->write(filp, p + blki*mtb->blocksize, 
-                                mtb->blocksize, &pos);
-            /*bw = vfs_write(filp, p + blki*4096, 4096, &pos);*/
-            /*bw = vfs_write(filp, p, 4096, &pos);*/
-            set_fs(old_fs);               
-            file_end_write(filp);
-            if (bw != mtb->blocksize) {
-                printk(KERN_ERR "loop: Write error at byte offset %llu, "
-                                "length %i. bw=%lu.\n",
-                        (unsigned long long)pos, mtb->blocksize, bw);
-                mutex_unlock(&lo->lo_ctl_mutex);
-                return -EIO;
-            } else {
-                /*printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",*/
-                                /*(unsigned long long)pos, bw);*/
-            }
-            /*vfs_fsync(filp, 0);*/
+        /*for ( blki = 0; blki < nblocks; blki++ ) */
+        /*{*/
+            /*pos = (pair_start_block + blki) * mtb->blocksize;*/
+            /*file_start_write(filp);*/
+            /*old_fs = get_fs();*/
+            /*set_fs(get_ds());*/
+            /*bw = filp->f_op->write(filp, p + blki*mtb->blocksize, */
+                                /*mtb->blocksize, &pos);*/
+            /*[>bw = vfs_write(filp, p + blki*4096, 4096, &pos);<]*/
+            /*[>bw = vfs_write(filp, p, 4096, &pos);<]*/
+            /*set_fs(old_fs);               */
+            /*file_end_write(filp);*/
+            /*if (bw != mtb->blocksize) {*/
+                /*printk(KERN_ERR "loop: Write error at byte offset %llu, "*/
+                                /*"length %i. bw=%lu.\n",*/
+                        /*(unsigned long long)pos, mtb->blocksize, bw);*/
+                /*mutex_unlock(&lo->lo_ctl_mutex);*/
+                /*return -EIO;*/
+            /*} else {*/
+                /*[>printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",<]*/
+                                /*[>(unsigned long long)pos, bw);<]*/
+            /*}*/
+            /*[>vfs_fsync(filp, 0);<]*/
+        /*}*/
+
+        /* write to backing file */
+        pos = 1 * mtb->blocksize; /* the first block (block 0) is for mtable */
+        len = mtb->blocksize * mtb->pair_seg_blocks;
+
+        file_start_write(filp);
+        old_fs = get_fs();
+        set_fs(get_ds());
+        bw = filp->f_op->write(filp, p, len, &pos);
+        /*bw = vfs_write(filp, p + blki*4096, 4096, &pos);*/
+        /*bw = vfs_write(filp, p, 4096, &pos);*/
+        set_fs(old_fs);               
+        file_end_write(filp);
+
+        if (bw != len) {
+            printk(KERN_ERR "loop: Write mtable pairs error at byte offset %llu, "
+                            "length %llu. bw=%lu.\n",
+                    (unsigned long long)pos, len, bw);
+            mutex_unlock(&lo->lo_ctl_mutex);
+            return -EIO;
         }
+
         printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
                           mtb->pairs->vblock,
                           mtb->pairs->rblock);
         printk(KERN_ERR "loop: successfully written mtable pairs "
-                        "(%lu blocks written).\n", nblocks);
+                        "(%lu blocks written).\n", mtb->pair_seg_blocks);
 
         newsize = mtb->blocksize*mtb->next_free_block;
         newattrs.ia_size = ((newsize/4096)+1)*4096;
