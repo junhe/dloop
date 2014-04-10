@@ -833,7 +833,7 @@ static int do_bio_filebacked(struct loop_device *lo, struct bio *bio)
 		 */
 		if (bio->bi_rw & REQ_DISCARD) {
 			struct file *file = lo->lo_backing_file;
-			int mode = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
+			/*int mode = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;*/
 
 			if ((!file->f_op->fallocate) ||
 			    lo->lo_encrypt_key_size) {
@@ -1276,9 +1276,10 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
     {
         mm_segment_t old_fs;
         char *tmp ;
-        loff_t pos;
+        loff_t pos, len;
         struct mtable *ptb;
-        ssize_t nblocks;
+        /*ssize_t nblocks;*/
+        ssize_t bw;
 
 
         /* read the mtable from file */
@@ -1296,7 +1297,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
              * update mtb with the one in file 
              */
             char *p;
-            blkcnt_t pair_start_block, blki;
+            /*blkcnt_t pair_start_block, blki;*/
 
             printk(KERN_ERR "backing file has metadata\n");
             
@@ -1307,24 +1308,24 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
             mtb->is_new_image = 0; /* not a new image */
             size = ptb->loop_size; /* overwrite the current one */
 
-            /* also, the file has all the table contents,
-             * read them in block by block*/
-            pair_start_block = 1;
-            /* number of blocks storing the mapping table */
-            nblocks = mtb->pair_seg_blocks;
+            /* read mtable pairs */
             p = (char *) mtb->pairs;
-            for ( blki = 0; blki < nblocks; blki++ ) 
-            {
-                pos = (pair_start_block + blki) * mtb->blocksize;
-                old_fs = get_fs();
-                set_fs(get_ds());
-                file->f_op->read(file, p + blki*mtb->blocksize, 
-                                mtb->blocksize, &pos);
-                set_fs(old_fs);               
+            pos = 1 * mtb->blocksize; /* the first block (block 0) is for mtable */
+            len = mtb->blocksize * mtb->pair_seg_blocks;
+
+            old_fs = get_fs();
+            set_fs(get_ds());
+            bw = file->f_op->read(file, p, len, &pos);
+            set_fs(old_fs);               
+
+            if (bw != len) {
+                printk(KERN_ERR "loop: Reading mtable pairs error at byte offset %llu, "
+                                "length %llu. bw=%lu.\n",
+                        (unsigned long long)pos, len, bw);
+                mutex_unlock(&lo->lo_ctl_mutex);
+                return -EIO;
             }
-            printk(KERN_ERR "loop: first elem: vblock:%lu rblock:%lu.\n",
-                              mtb->pairs->vblock,
-                              mtb->pairs->rblock);
+
             printk(KERN_ERR "loop: successfully read mtable pairs.\n");
         } else {
             /* the file does not have the metadata 
@@ -1522,13 +1523,13 @@ static int loop_clr_fd(struct loop_device *lo)
 	if (!part_shift)
 		lo->lo_disk->flags |= GENHD_FL_NO_PART_SCAN;
 
-    if (mtb->is_new_image == 1) {
+    if ( mtb->is_new_image == 1) {
         /* only save image when this is a new image */
         loff_t pos;
         unsigned int mtbsize;
         ssize_t bw;
         mm_segment_t old_fs;
-        blkcnt_t pair_start_block, blki;
+        /*blkcnt_t pair_start_block, blki;*/
         char *p;
         ssize_t nblocks;
         struct inode *inode;
@@ -1554,37 +1555,9 @@ static int loop_clr_fd(struct loop_device *lo)
                 "successfully written mtable to file.\n");
 
         /* write mtable pairs to backing file */
-        pair_start_block = 1;
-        printk(KERN_ERR "loop: pair_start_block: %lu\n", pair_start_block);
-
         p = (char *) mtb->pairs;
         /* number of block occupied by the table itself */
         nblocks = mtb->pair_seg_blocks;
-
-        /*for ( blki = 0; blki < nblocks; blki++ ) */
-        /*{*/
-            /*pos = (pair_start_block + blki) * mtb->blocksize;*/
-            /*file_start_write(filp);*/
-            /*old_fs = get_fs();*/
-            /*set_fs(get_ds());*/
-            /*bw = filp->f_op->write(filp, p + blki*mtb->blocksize, */
-                                /*mtb->blocksize, &pos);*/
-            /*[>bw = vfs_write(filp, p + blki*4096, 4096, &pos);<]*/
-            /*[>bw = vfs_write(filp, p, 4096, &pos);<]*/
-            /*set_fs(old_fs);               */
-            /*file_end_write(filp);*/
-            /*if (bw != mtb->blocksize) {*/
-                /*printk(KERN_ERR "loop: Write error at byte offset %llu, "*/
-                                /*"length %i. bw=%lu.\n",*/
-                        /*(unsigned long long)pos, mtb->blocksize, bw);*/
-                /*mutex_unlock(&lo->lo_ctl_mutex);*/
-                /*return -EIO;*/
-            /*} else {*/
-                /*[>printk(KERN_ERR "loop: Written OK at pos %llu length %lu.\n",<]*/
-                                /*[>(unsigned long long)pos, bw);<]*/
-            /*}*/
-            /*[>vfs_fsync(filp, 0);<]*/
-        /*}*/
 
         /* write to backing file */
         pos = 1 * mtb->blocksize; /* the first block (block 0) is for mtable */
