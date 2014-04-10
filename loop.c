@@ -836,8 +836,9 @@ static int do_bio_filebacked(struct loop_device *lo, struct bio *bio)
 				ret = -EOPNOTSUPP;
 				goto out;
 			}
-			ret = file->f_op->fallocate(file, mode, pos,
-						    bio->bi_size);
+			/*ret = file->f_op->fallocate(file, mode, pos,*/
+							/*bio->bi_size);*/
+            ret = 0;
 			if (unlikely(ret && ret != -EINVAL &&
 				     ret != -EOPNOTSUPP))
 				ret = -EIO;
