@@ -1866,7 +1866,8 @@ static int __init loop_init(void)
 		nr = max_loop;
 		range = max_loop << part_shift;
 	} else {
-		nr = CONFIG_BLK_DEV_LOOP_MIN_COUNT;
+		/*nr = CONFIG_BLK_DEV_LOOP_MIN_COUNT;*/
+		nr = 8;
 		range = 1UL << MINORBITS;
 	}
 
